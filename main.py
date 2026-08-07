@@ -5,7 +5,7 @@ from docling.document_converter import DocumentConverter
 
 app = FastAPI()
 
-# Permite que o Lovable se conecte sem bloqueios de segurança
+# Liberação de segurança para comunicação externa com o Lovable
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
@@ -13,8 +13,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-converter = DocumentConverter()
 
 class EditalRequest(BaseModel):
     url: str
@@ -26,6 +24,8 @@ def home():
 @app.post("/converter-edital")
 def converter_edital(request: EditalRequest):
     try:
+        # Inicializa o conversor de forma dinâmica por requisição para poupar memória do servidor
+        converter = DocumentConverter()
         result = converter.convert(request.url)
         markdown_limpo = result.document.export_to_markdown()
         return {"markdown": markdown_limpo}
