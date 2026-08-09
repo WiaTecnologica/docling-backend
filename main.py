@@ -1,9 +1,9 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from docling.document_converter import DocumentConverter, PdfPipelineOptions
-from docling.datamodel.pipeline_options import PipelineOptions
-from docling.datamodel.base_models import InputFormat
+from markitdown import MarkItDown
+import requests
+import os
 
 app = FastAPI()
 
@@ -20,23 +20,31 @@ class EditalRequest(BaseModel):
 
 @app.get("/")
 def home():
-    return {"status": "Online", "service": "Docling Fast Parser"}
+    return {"status": "Online", "service": "Microsoft MarkItDown Parser"}
 
 @app.post("/converter-edital")
 def converter_edital(request: EditalRequest):
     try:
-        # Configuração mágica: desativa os modelos pesados de IA visual para economizar RAM
-        pipeline_options = PipelineOptions()
-        pipeline_options.pdf_pipeline_options.do_table_structure = False
-        pipeline_options.pdf_pipeline_options.do_ocr = True
+        # Baixa o PDF do edital de forma segura na memória temporária
+        response = requests.get(request.url, timeout=30)
+        if response.status_code != 200:
+            raise HTTPException(status_code=400, detail="Não foi possível baixar o PDF do link informado.")
         
-        converter = DocumentConverter(
-            allowed_formats=[InputFormat.PDF],
-            pipeline_options=pipeline_options
-        )
+        temp_filename = "edital_temp.pdf"
+        with open(temp_filename, "wb") as f:
+            f.write(response.content)
         
-        result = converter.convert(request.url)
-        markdown_limpo = result.document.export_to_markdown()
+        # Executa a conversão leve da Microsoft
+        md = MarkItDown()
+        result = md.convert(temp_filename)
+        markdown_limpo = result.text_content
+        
+        # Remove o arquivo temporário para manter o servidor limpo
+        if os.path.exists(temp_filename):
+            os.remove(temp_filename)
+            
         return {"markdown": markdown_limpo}
     except Exception as e:
+        if os.path.exists(temp_filename):
+            os.remove(temp_filename)
         raise HTTPException(status_code=500, detail=f"Erro ao processar o PDF: {str(e)}")
