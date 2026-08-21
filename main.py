@@ -1,50 +1,95 @@
+import os
+import tempfile
+import requests
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from markitdown import MarkItDown
-import requests
-import os
+
 
 app = FastAPI()
 
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+
 class EditalRequest(BaseModel):
     url: str
 
+
 @app.get("/")
 def home():
-    return {"status": "Online", "service": "Microsoft MarkItDown Parser"}
+    return {
+        "status": "Online",
+        "service": "Microsoft MarkItDown Parser"
+    }
+
 
 @app.post("/converter-edital")
 def converter_edital(request: EditalRequest):
+    temp_filename = None
+    url = (request.url or "").strip()
+
+    if not url.lower().startswith(("http://", "https://")):
+        raise HTTPException(
+            status_code=400,
+            detail="URL inválida: informe http:// ou https://"
+        )
+
     try:
-        # Baixa o PDF do edital de forma segura na memória temporária
-        response = requests.get(request.url, timeout=30)
-        if response.status_code != 200:
-            raise HTTPException(status_code=400, detail="Não foi possível baixar o PDF do link informado.")
-        
-        temp_filename = "edital_temp.pdf"
-        with open(temp_filename, "wb") as f:
-            f.write(response.content)
-        
-        # Executa a conversão leve da Microsoft
-        md = MarkItDown()
-        result = md.convert(temp_filename)
-        markdown_limpo = result.text_content
-        
-        # Remove o arquivo temporário para manter o servidor limpo
-        if os.path.exists(temp_filename):
-            os.remove(temp_filename)
-            
-        return {"markdown": markdown_limpo}
+        r = requests.get(
+            url,
+            timeout=60,
+            stream=True,
+            headers={
+                "User-Agent": "Mozilla/5.0",
+                "Accept": "application/pdf,*/*",
+            },
+        )
+
+        if r.status_code != 200 or not r.content:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Download falhou ({r.status_code})."
+            )
+
+        with tempfile.NamedTemporaryFile(
+            suffix=".pdf",
+            delete=False
+        ) as f:
+            temp_filename = f.name
+
+            for chunk in r.iter_content(65536):
+                f.write(chunk)
+
+        md = MarkItDown().convert(temp_filename).text_content
+
+        return {
+            "markdown": md,
+            "chars": len(md)
+        }
+
+    except HTTPException:
+        raise
+
     except Exception as e:
-        if os.path.exists(temp_filename):
+        raise HTTPException(
+            status_code=502,
+            detail=f"Falha na conversão: {e}"
+        )
+
+    finally:
+        if temp_filename and os.path.exists(temp_filename):
             os.remove(temp_filename)
-        raise HTTPException(status_code=500, detail=f"Erro ao processar o PDF: {str(e)}")
+
+
+@app.get("/health")
+def health():
+    return {"ok": True}
